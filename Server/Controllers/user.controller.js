@@ -1,6 +1,6 @@
 const bcrypt = require('bcrypt'); // Library for hashing passwords
 const jwt = require('jsonwebtoken'); // Library for generating and verifying JWT tokens
-const User = require("../Models/User"); // User model
+const User = require("../Modals/user.modal"); // User model
 
 // In-memory token blacklist to store invalidated tokens
 const tokenBlacklist = new Set();
