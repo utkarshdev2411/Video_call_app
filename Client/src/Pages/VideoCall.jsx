@@ -15,8 +15,8 @@ function VideoCall() {
 
   useEffect(() => {
     // Replace <YOUR_MACHINE_IP> with your development machine's IP address
-    // and ensure you are using HTTPS.
-    socket.current = io.connect('https://192.168.101.41:3000/');
+    // and ensure you are using HTTPS if required.
+    socket.current = io.connect('https://192.168.101.41:3000/'  );
     console.log('Socket initiated.');
 
     socket.current.on('connect', () => {
@@ -100,10 +100,9 @@ function VideoCall() {
       if (remoteVideo) remoteVideo.srcObject = event.streams[0];
     };
 
+    // Cleanup on unmount (if disconnectCall hasn't been called manually)
     return () => {
-      if (localPeerConnection.current) localPeerConnection.current.close();
-      if (remotePeerConnection.current) remotePeerConnection.current.close();
-      if (socket.current) socket.current.disconnect();
+      disconnectCall();
     };
   }, []);
 
@@ -126,6 +125,24 @@ function VideoCall() {
         console.error('No target user found in room.');
       }
     });
+  }
+
+  // Disconnect the call by closing peer connections and disconnecting the socket.
+  function disconnectCall() {
+    console.log('Disconnecting call...');
+    if (localPeerConnection.current) {
+      localPeerConnection.current.close();
+      localPeerConnection.current = null;
+    }
+    if (remotePeerConnection.current) {
+      remotePeerConnection.current.close();
+      remotePeerConnection.current = null;
+    }
+    if (socket.current) {
+      socket.current.disconnect();
+      socket.current = null;
+    }
+    // Optionally, you can clear local stream or update UI state here.
   }
 
   function toggleAudio() {
@@ -153,6 +170,7 @@ function VideoCall() {
         <button onClick={createOffer}>Start Call</button>
         <button onClick={toggleAudio}>{isAudioMuted ? 'Unmute' : 'Mute'}</button>
         <button onClick={toggleVideo}>{isVideoOff ? 'Turn Video On' : 'Turn Video Off'}</button>
+        <button onClick={disconnectCall}>Disconnect Call</button>
       </div>
     </div>
   );
