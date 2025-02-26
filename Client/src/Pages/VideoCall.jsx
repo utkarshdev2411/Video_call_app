@@ -2,42 +2,49 @@ import { useEffect, useState, useRef } from 'react';
 import io from 'socket.io-client';
 import './VideoCall.css';
 
+/**
+ * VideoCall component for handling video and audio calls using WebRTC and Socket.IO.
+ */
 function VideoCall() {
+  // useRef hooks to hold references to the peer connections and socket instance.
   const localPeerConnection = useRef(null);
   const remotePeerConnection = useRef(null);
   const socket = useRef(null);
+
+  // useState hooks to manage local video stream, audio mute state, and video off state.
   const [localStream, setLocalStream] = useState(null);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
-  // Store the remote user's socket id once discovered
+
+  // useRef to store the remote user's ID.
   const remoteUserId = useRef(null);
+  // Static room ID for the video call.
   const roomId = "room-123";
 
+  // useEffect hook to initialize the WebRTC connection and Socket.IO communication.
   useEffect(() => {
-    // Replace <YOUR_MACHINE_IP> with your development machine's IP address
-    // and ensure you are using HTTPS if required.
-    socket.current = io.connect('https://192.168.101.41:3000/'  );
-    console.log('Socket initiated.');
+    // Connect to the Socket.IO server.  Replace with your actual server address.
+    socket.current = io.connect('https://Your_Local_IP_Address:3000/');
 
+    // Emit 'join-room' event when connected to the Socket.IO server.
     socket.current.on('connect', () => {
-      console.log('Socket connected with id:', socket.current.id);
       socket.current.emit('join-room', roomId, socket.current.id);
-      console.log(`Joined room ${roomId} as ${socket.current.id}`);
     });
 
+    // Configuration for the RTCPeerConnection. Includes STUN server for NAT traversal.
     const configuration = {
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
 
-    // Create peer connections for local and remote streams.
+    // Initialize local and remote peer connections.
     localPeerConnection.current = new RTCPeerConnection(configuration);
     remotePeerConnection.current = new RTCPeerConnection(configuration);
 
-    // Send ICE candidates from the local peer along with the target remote user's ID.
+    // Listen for ICE candidates on the local peer connection.
     localPeerConnection.current.onicecandidate = ({ candidate }) => {
       if (candidate) {
+        // When a new ICE candidate is generated, send it to the remote user through the signaling server.
         if (remoteUserId.current) {
-          console.log('Local ICE candidate:', candidate);
           socket.current.emit('ice-candidate', { candidate, roomId, targetUserId: remoteUserId.current });
         } else {
           console.error('ICE candidate error: No remote user ID available.');
@@ -45,45 +52,44 @@ function VideoCall() {
       }
     };
 
-    // When receiving ICE candidates from the other peer, add them.
+    // Handle incoming ICE candidates from the remote peer.
     socket.current.on('ice-candidate', ({ candidate }) => {
-      console.log('Received ICE candidate:', candidate);
+      // Add the received ICE candidate to the remote peer connection.
       remotePeerConnection.current.addIceCandidate(new RTCIceCandidate(candidate))
         .catch(e => console.error('Error adding received ICE candidate', e));
     });
 
-    // Handle incoming offers.
+    // Handle offer from remote user.
     socket.current.on('offer', ({ offer, senderId }) => {
-      console.log('Received offer:', offer);
-      // Save the remote user's socket id.
       remoteUserId.current = senderId;
+      // Set the remote description and create an answer.
       remotePeerConnection.current.setRemoteDescription(new RTCSessionDescription(offer))
         .then(() => remotePeerConnection.current.createAnswer())
         .then(answer => remotePeerConnection.current.setLocalDescription(answer).then(() => answer))
         .then(answer => {
+          // Send the answer back to the remote user.
           socket.current.emit('answer', { answer, roomId, targetUserId: senderId });
-          console.log('Sent answer:', answer);
         })
         .catch(err => console.error('Error handling offer', err));
     });
 
-    // Handle incoming answers.
+    // Handle answer from remote user.
     socket.current.on('answer', ({ answer, senderId }) => {
-      console.log('Received answer:', answer);
-      // Save the remote user's socket id.
       remoteUserId.current = senderId;
+      // Set the remote description on the local peer connection.
       localPeerConnection.current.setRemoteDescription(new RTCSessionDescription(answer))
         .catch(err => console.error('Error setting remote description for answer', err));
     });
 
-    // Get user media (audio and video) and attach to local video element.
+    // Get user media (audio and video).
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then((stream) => {
-        console.log('Got local stream:', stream);
+        // Set the local stream to the local video element.
         const localVideo = document.getElementById('localVideo');
         if (localVideo) localVideo.srcObject = stream;
         setLocalStream(stream);
-        // Add tracks to both peer connections.
+
+        // Add tracks from the local stream to the peer connections.
         stream.getTracks().forEach(track => {
           localPeerConnection.current.addTrack(track, stream);
           remotePeerConnection.current.addTrack(track, stream);
@@ -93,32 +99,35 @@ function VideoCall() {
         console.error('Error accessing media devices.', error);
       });
 
-    // When remote peer connection receives a track, attach it to remote video.
+    // Handle incoming media tracks from the remote peer.
     remotePeerConnection.current.ontrack = (event) => {
-      console.log('Received remote stream:', event.streams[0]);
+      // Set the remote stream to the remote video element.
       const remoteVideo = document.getElementById('remoteVideo');
       if (remoteVideo) remoteVideo.srcObject = event.streams[0];
     };
 
-    // Cleanup on unmount (if disconnectCall hasn't been called manually)
+    // Cleanup function to disconnect the call when the component unmounts.
     return () => {
       disconnectCall();
     };
-  }, []);
+  }, []); // Empty dependency array ensures this effect runs only once on mount.
 
-  // Create an offer. First, ask the server for the list of users in the room.
+  /**
+   * Initiates the call by creating an offer and sending it to the target user.
+   */
   function createOffer() {
-    console.log('Creating offer...');
+    // Get the list of users in the room from the server.
     socket.current.emit('get-users', roomId, (users) => {
-      // Pick a target user different from ourselves.
+      // Find the target user (the user other than the current user).
       const targetUser = users.find(id => id !== socket.current.id);
       if (targetUser) {
         remoteUserId.current = targetUser;
+        // Create an offer.
         localPeerConnection.current.createOffer()
           .then(offer => localPeerConnection.current.setLocalDescription(offer).then(() => offer))
           .then(offer => {
+            // Send the offer to the target user.
             socket.current.emit('offer', { offer, roomId, targetUserId: targetUser });
-            console.log(`Offer sent to ${targetUser} in room ${roomId}`, offer);
           })
           .catch(error => console.error('Error creating offer:', error));
       } else {
@@ -127,9 +136,10 @@ function VideoCall() {
     });
   }
 
-  // Disconnect the call by closing peer connections and disconnecting the socket.
+  /**
+   * Disconnects the call by closing the peer connections and disconnecting from the socket.
+   */
   function disconnectCall() {
-    console.log('Disconnecting call...');
     if (localPeerConnection.current) {
       localPeerConnection.current.close();
       localPeerConnection.current = null;
@@ -142,9 +152,11 @@ function VideoCall() {
       socket.current.disconnect();
       socket.current = null;
     }
-    // Optionally, you can clear local stream or update UI state here.
   }
 
+  /**
+   * Toggles the audio mute state.
+   */
   function toggleAudio() {
     if (localStream) {
       localStream.getAudioTracks()[0].enabled = !isAudioMuted;
@@ -152,6 +164,9 @@ function VideoCall() {
     }
   }
 
+  /**
+   * Toggles the video off state.
+   */
   function toggleVideo() {
     if (localStream) {
       localStream.getVideoTracks()[0].enabled = !isVideoOff;
@@ -163,7 +178,7 @@ function VideoCall() {
     <div className="video-call-container">
       <h2>Video Call</h2>
       <div className="video-container">
-        <video id="localVideo" autoPlay playsInline className="video"></video>
+        <video id="localVideo" autoPlay playsInline muted className="video"></video>
         <video id="remoteVideo" autoPlay playsInline className="video"></video>
       </div>
       <div className="controls">
